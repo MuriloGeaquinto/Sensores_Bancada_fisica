@@ -1,210 +1,160 @@
-#include <Adafruit_LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
 
-Adafruit_LiquidCrystal lcd_1(0);
+// ================= LCD =================
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
+// ================= PINAGENS =================
 // Par A
-const int sensorA1Pin = A0;
+const int sensorA1Pin = A0;  // ponta "início" (A0 -> A3)
 const int sensorA2Pin = A1;
 // Par B
 const int sensorB1Pin = A2;
-const int sensorB2Pin = A3;
+const int sensorB2Pin = A3;  // ponta "fim" (A3 -> A0)
 
-// Timestamps de cada sensor (0 = ainda não acionado)
-unsigned long timeA1 = 0;
-unsigned long timeA2 = 0;
-unsigned long timeB1 = 0;
-unsigned long timeB2 = 0;
+// ================= DISTÂNCIAS =================
+const float distance_A = 8.0; // cm entre A1 e A2
+const float distance_B = 8.0; // cm entre B1 e B2
 
-// Distâncias (cm)
-const float distance_A = 15.0; // entre A1 e A2
-const float distance_B = 15.0; // entre B1 e B2
-
-// Limiar do sensor
+// ================= LIMIAR =================
 const int THRESHOLD = 650;
-const unsigned long DEBOUNCE_MS = 50;
 
-int lastTriggered = -1;
-unsigned long lastTriggerTime = 0;
+// ================= TEMPOS POR SENSOR INDIVIDUAL =================
+unsigned long tA0 = 0, tA1 = 0, tA2 = 0, tA3 = 0;
+bool A0Blocked = false, A1Blocked = false;
+bool A2Blocked = false, A3Blocked = false;
+
+// ================= RESULTADOS =================
+float velA = 0;
+float velB = 0;
+float tempoTotal = 0;
+float aceleracao = 0;
 
 void setup() {
-    lcd_1.begin(16, 2);
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("Aguardando...");
+    lcd.init();
+    lcd.backlight();
+    mostrarAguardando();
 }
 
-// Registra o tempo do sensor se ainda não foi acionado
-void tryRegister(int sensorId, int pin, unsigned long &timestamp) {
-    if (timestamp != 0) return;
-    if (analogRead(pin) < THRESHOLD) {
-        unsigned long now = millis();
-        if (sensorId == lastTriggered && (now - lastTriggerTime) < DEBOUNCE_MS) return;
-        timestamp = now;
-        lastTriggered = sensorId;
-        lastTriggerTime = now;
+// ---------------------------------------------------------------
+// Lê cada sensor individualmente e guarda o timestamp do 1º disparo
+// Retorna true quando TODOS os 4 já foram interrompidos
+// ---------------------------------------------------------------
+bool lerTodosSensores() {
+    if (!A0Blocked && analogRead(sensorA1Pin) < THRESHOLD) {
+        A0Blocked = true; tA0 = millis();
     }
+    if (!A1Blocked && analogRead(sensorA2Pin) < THRESHOLD) {
+        A1Blocked = true; tA1 = millis();
+    }
+    if (!A2Blocked && analogRead(sensorB1Pin) < THRESHOLD) {
+        A2Blocked = true; tA2 = millis();
+    }
+    if (!A3Blocked && analogRead(sensorB2Pin) < THRESHOLD) {
+        A3Blocked = true; tA3 = millis();
+    }
+
+    return (A0Blocked && A1Blocked && A2Blocked && A3Blocked);
+}
+
+// ---------------------------------------------------------------
+// Calcula velocidades, tempo total e aceleração
+// ---------------------------------------------------------------
+void calcularTudo() {
+    // --- Velocidade do Par A (entre A0 e A1) ---
+    unsigned long aIni = min(tA0, tA1);
+    unsigned long aFim = max(tA0, tA1);
+    float tempoA = (aFim - aIni) / 1000.0;
+    velA = (tempoA > 0) ? (distance_A / tempoA) : 0;
+
+    // --- Velocidade do Par B (entre A2 e A3) ---
+    unsigned long bIni = min(tA2, tA3);
+    unsigned long bFim = max(tA2, tA3);
+    float tempoB = (bFim - bIni) / 1000.0;
+    velB = (tempoB > 0) ? (distance_B / tempoB) : 0;
+
+    // --- Tempo total (do 1º sensor ao último) ---
+    unsigned long tIniTotal = min(min(tA0, tA1), min(tA2, tA3));
+    unsigned long tFimTotal = max(max(tA0, tA1), max(tA2, tA3));
+    tempoTotal = (tFimTotal - tIniTotal) / 1000.0;
+
+    // --- Sentido: quem disparou primeiro, A0 ou A3? ---
+    // Aceleração: se A0 disparou antes (A0 -> A3), usa (velB - velA);
+    // caso contrário (A3 -> A0), usa (velA - velB).
+    if (tempoTotal > 0) {
+        aceleracao = (tA0 < tA3) ? ((velB - velA) / tempoTotal)
+                                 : ((velA - velB) / tempoTotal);
+    } else {
+        aceleracao = 0;
+    }
+}
+
+// ---------------------------------------------------------------
+// Tela "Aguardando..."
+// ---------------------------------------------------------------
+void mostrarAguardando() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Aguardando...");
+}
+
+// ---------------------------------------------------------------
+// Exibe resultados: SEMPRE A primeiro, depois B, depois acel., tempo
+// ---------------------------------------------------------------
+void exibirResultado() {
+    // Tela 1: Velocidade em A
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Velocidade em A:");
+    lcd.setCursor(0, 1);
+    lcd.print(velA, 1);
+    lcd.print(" cm/s");
+    delay(5500);
+
+    // Tela 2: Velocidade em B
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Velocidade em B:");
+    lcd.setCursor(0, 1);
+    lcd.print(velB, 1);
+    lcd.print(" cm/s");
+    delay(5500);
+
+    // Tela 3: Aceleração geral
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Acel. geral:");
+    lcd.setCursor(0, 1);
+    lcd.print(aceleracao, 2);
+    lcd.print(" cm/s2");
+    delay(5500);
+
+    // Tela 4: Tempo total
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Tempo total:");
+    lcd.setCursor(0, 1);
+    lcd.print(tempoTotal, 2);
+    lcd.print(" s");
+    delay(5500);
+}
+
+// ---------------------------------------------------------------
+// Reinicia tudo
+// ---------------------------------------------------------------
+void resetar() {
+    A0Blocked = A1Blocked = A2Blocked = A3Blocked = false;
+    tA0 = tA1 = tA2 = tA3 = 0;
+    velA = velB = 0;
+    tempoTotal = 0;
+    aceleracao = 0;
 }
 
 void loop() {
-    tryRegister(1, sensorA1Pin, timeA1);
-    tryRegister(2, sensorA2Pin, timeA2);
-    tryRegister(3, sensorB1Pin, timeB1);
-    tryRegister(4, sensorB2Pin, timeB2);
-
-    bool parA_completo = (timeA1 != 0 && timeA2 != 0);
-    bool parB_completo = (timeB1 != 0 && timeB2 != 0);
-
-    if (parA_completo && parB_completo) {
-        executarTesteCompleto();
+    // Aguarda todos os 4 sensores serem interrompidos
+    if (lerTodosSensores()) {
+        calcularTudo();
+        exibirResultado();
         resetar();
+        mostrarAguardando();
     }
-    else if (parA_completo && timeB1 == 0 && timeB2 == 0) {
-        executarTestePar("A", timeA1, timeA2, distance_A);
-        resetar();
-    }
-    else if (parB_completo && timeA1 == 0 && timeA2 == 0) {
-        executarTestePar("B", timeB1, timeB2, distance_B);
-        resetar();
-    }
-}
-
-// ---------- Teste de um único par (bidirecional) ----------
-void executarTestePar(const char* nomePar, unsigned long t1, unsigned long t2, float distancia) {
-    bool sentidoNormal = (t2 > t1);
-    unsigned long tIni = sentidoNormal ? t1 : t2;
-    unsigned long tFim = sentidoNormal ? t2 : t1;
-
-    float tempo = (tFim - tIni) / 1000.0;
-    float vel = distancia / tempo;
-
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("Par ");
-    lcd_1.print(nomePar);
-    lcd_1.print(sentidoNormal ? " ->" : " <-");
-
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("t:");
-    lcd_1.print(tempo, 2);
-    lcd_1.print("s");
-    delay(3000);
-
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("Par ");
-    lcd_1.print(nomePar);
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("v:");
-    lcd_1.print(vel, 1);
-    lcd_1.print(" cm/s");
-    delay(3000);
-}
-
-// ---------- Teste completo (bidirecional) ----------
-void executarTesteCompleto() {
-    // Ordena os 4 eventos por tempo
-    struct Evento { unsigned long t; int id; };
-    Evento ev[4] = {
-        {timeA1, 1}, {timeA2, 2},
-        {timeB1, 3}, {timeB2, 4}
-    };
-    for (int i = 0; i < 3; i++) {
-        for (int j = i + 1; j < 4; j++) {
-            if (ev[j].t < ev[i].t) {
-                Evento tmp = ev[i]; ev[i] = ev[j]; ev[j] = tmp;
-            }
-        }
-    }
-
-    // Sentido global: qual par veio primeiro
-    unsigned long primeiroA = min(timeA1, timeA2);
-    unsigned long primeiroB = min(timeB1, timeB2);
-    bool sentidoAB = (primeiroA < primeiroB);
-
-    // Tempo e velocidade média DENTRO do par A
-    unsigned long tA_ini = min(timeA1, timeA2);
-    unsigned long tA_fim = max(timeA1, timeA2);
-    float tempoA = (tA_fim - tA_ini) / 1000.0;
-    float velA = distance_A / tempoA;
-
-    // Tempo e velocidade média DENTRO do par B
-    unsigned long tB_ini = min(timeB1, timeB2);
-    unsigned long tB_fim = max(timeB1, timeB2);
-    float tempoB = (tB_fim - tB_ini) / 1000.0;
-    float velB = distance_B / tempoB;
-
-    // Tempo total do trajeto (do primeiro ao último sensor acionado)
-    unsigned long tTotalIni = ev[0].t;
-    unsigned long tTotalFim = ev[3].t;
-    float tempoTotal = (tTotalFim - tTotalIni) / 1000.0;
-
-    // Aceleração média geral do sistema 
-    float velInicial = sentidoAB ? velA : velB;
-    float velFinal   = sentidoAB ? velB : velA;
-    float acelGeral  = (velFinal - velInicial) / tempoTotal;
-
-    // -------- Tela 1: sentido + tempo total --------
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("Sentido: ");
-    lcd_1.print(sentidoAB ? "A->B" : "B->A");
-
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("Total:");
-    lcd_1.print(tempoTotal, 2);
-    lcd_1.print("s");
-    delay(3000);
-
-    // -------- Tela 2: velocidades médias --------
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("vA:");
-    lcd_1.print(velA, 1);
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("vB:");
-    lcd_1.print(velB, 1);
-    lcd_1.print(" cm/s");
-    delay(3000);
-
-    // -------- Tela 3: aceleração média geral --------
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("a geral:");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print(acelGeral, 2);
-    lcd_1.print(" cm/s2");
-    delay(3000);
-}
-
-// Zera todos os timestamps para o próximo teste
-void resetar() {
-    timeA1 = 0;
-    timeA2 = 0;
-    timeB1 = 0;
-    timeB2 = 0;
-    lastTriggered = -1;
-
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 1);
-    lcd_1.print("                ");
-    lcd_1.setCursor(0, 0);
-    lcd_1.print("Aguardando...");
-    delay(2000);
 }
