@@ -77,7 +77,6 @@ void calcularTudo() {
     unsigned long tFimTotal = max(max(tA0, tA1), max(tA2, tA3));
     tempoTotal = (tFimTotal - tIniTotal) / 1000.0;
 
-    // --- Sentido: quem disparou primeiro, A0 ou A3? ---
     // Aceleração: se A0 disparou antes (A0 -> A3), usa (velB - velA);
     // caso contrário (A3 -> A0), usa (velA - velB).
     if (tempoTotal > 0) {
@@ -98,7 +97,7 @@ void mostrarAguardando() {
 }
 
 // ---------------------------------------------------------------
-// Exibe resultados: SEMPRE A primeiro, depois B, depois acel., tempo
+// Resultados
 // ---------------------------------------------------------------
 void exibirResultado() {
     // Tela 1: Velocidade em A
